@@ -181,7 +181,7 @@ class geometricCtrl {
     }
   };
   geometry_msgs::Pose home_pose_;
-  bool received_home_pose;
+  bool received_home_pose = false;
   std::shared_ptr<Control> controller_;
 
  public:

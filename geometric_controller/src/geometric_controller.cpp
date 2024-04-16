@@ -58,9 +58,11 @@ geometricCtrl::geometricCtrl(const ros::NodeHandle &nh, const ros::NodeHandle &n
                                     ros::TransportHints().tcpNoDelay());
   mavstateSub_ =
       nh_.subscribe("mavros/state", 1, &geometricCtrl::mavstateCallback, this, ros::TransportHints().tcpNoDelay());
-  mavposeSub_ = nh_.subscribe("mavros/local_position/pose", 1, &geometricCtrl::mavposeCallback, this,
+  // mavposeSub_ = nh_.subscribe("mavros/local_position/pose", 1, &geometricCtrl::mavposeCallback, this,
+  mavposeSub_ = nh_.subscribe("/local_pose_from_odom", 1, &geometricCtrl::mavposeCallback, this,
                               ros::TransportHints().tcpNoDelay());
-  mavtwistSub_ = nh_.subscribe("mavros/local_position/velocity_local", 1, &geometricCtrl::mavtwistCallback, this,
+  // mavtwistSub_ = nh_.subscribe("mavros/local_position/velocity_local", 1, &geometricCtrl::mavtwistCallback, this,
+  mavtwistSub_ = nh_.subscribe("/twist_from_odom", 1, &geometricCtrl::mavtwistCallback, this,
                                ros::TransportHints().tcpNoDelay());
   ctrltriggerServ_ = nh_.advertiseService("trigger_rlcontroller", &geometricCtrl::ctrltriggerCallback, this);
   cmdloop_timer_ = nh_.createTimer(ros::Duration(0.01), &geometricCtrl::cmdloopCallback,
@@ -103,7 +105,7 @@ geometricCtrl::geometricCtrl(const ros::NodeHandle &nh, const ros::NodeHandle &n
   nh_private_.param<int>("posehistory_window", posehistory_window_, 200);
   nh_private_.param<double>("init_pos_x", initTargetPos_x_, 0.0);
   nh_private_.param<double>("init_pos_y", initTargetPos_y_, 0.0);
-  nh_private_.param<double>("init_pos_z", initTargetPos_z_, 2.0);
+  nh_private_.param<double>("init_pos_z", initTargetPos_z_, 3.0);
 
   targetPos_ << initTargetPos_x_, initTargetPos_y_, initTargetPos_z_;  // Initial Position
   targetVel_ << 0.0, 0.0, 0.0;
@@ -183,6 +185,7 @@ void geometricCtrl::yawtargetCallback(const std_msgs::Float32 &msg) {
 }
 
 void geometricCtrl::multiDOFJointCallback(const trajectory_msgs::MultiDOFJointTrajectory &msg) {
+  ROS_INFO_ONCE("Getting trajectory");
   trajectory_msgs::MultiDOFJointTrajectoryPoint pt = msg.points[0];
   reference_request_last_ = reference_request_now_;
 
@@ -200,10 +203,17 @@ void geometricCtrl::multiDOFJointCallback(const trajectory_msgs::MultiDOFJointTr
   targetSnap_ = Eigen::Vector3d::Zero();
 
   if (!velocity_yaw_) {
-    Eigen::Quaterniond q(pt.transforms[0].rotation.w, pt.transforms[0].rotation.x, pt.transforms[0].rotation.y,
-                         pt.transforms[0].rotation.z);
-    Eigen::Vector3d rpy = Eigen::Matrix3d(q).eulerAngles(0, 1, 2);  // RPY
-    mavYaw_ = rpy(2);
+    // Eigen::Quaterniond q(pt.transforms[0].rotation.w, pt.transforms[0].rotation.x, pt.transforms[0].rotation.y,
+    //                      pt.transforms[0].rotation.z);
+    // Eigen::Vector3d rpy = Eigen::Matrix3d(q).eulerAngles(0, 1, 2);  // RPY
+    // mavYaw_ = rpy(2);
+    tf::Quaternion q(pt.transforms[0].rotation.x, pt.transforms[0].rotation.y, pt.transforms[0].rotation.z, pt.transforms[0].rotation.w);
+    tf::Matrix3x3 m(q);
+    double r, p, y;
+    m.getRPY(r, p, y);
+    mavYaw_ = y;
+    // mavYaw_ = 0;
+    // ROS_WARN_STREAM(mavYaw_);
   }
 }
 
@@ -221,6 +231,7 @@ void geometricCtrl::mavposeCallback(const geometry_msgs::PoseStamped &msg) {
 }
 
 void geometricCtrl::mavtwistCallback(const geometry_msgs::TwistStamped &msg) {
+  ROS_INFO_ONCE("Got Twist!!");
   mavVel_ = toEigen(msg.twist.linear);
   mavRate_ = toEigen(msg.twist.angular);
 }
@@ -279,12 +290,19 @@ void geometricCtrl::statusloopCallback(const ros::TimerEvent &event) {
     mavros_msgs::SetMode offb_set_mode;
     arm_cmd_.request.value = true;
     offb_set_mode.request.custom_mode = "OFFBOARD";
-    if (current_state_.mode != "OFFBOARD" && (ros::Time::now() - last_request_ > ros::Duration(5.0))) {
+    if (current_state_.mode != "OFFBOARD") {// && (ros::Time::now() - last_request_ > ros::Duration(5.0))) {
+      ROS_WARN("Setting offboard");
+      computeBodyRateCmd(cmdBodyRate_, controlPosition(targetPos_, targetVel_, targetAcc_));
+      pubRateCommands(cmdBodyRate_, q_des);
+      if (ros::Time::now() - last_request_ < ros::Duration(5.0))
+        ; // do nothing
       if (set_mode_client_.call(offb_set_mode) && offb_set_mode.response.mode_sent) {
         ROS_INFO("Offboard enabled");
       }
       last_request_ = ros::Time::now();
     } else {
+      computeBodyRateCmd(cmdBodyRate_, controlPosition(targetPos_, targetVel_, targetAcc_));
+      pubRateCommands(cmdBodyRate_, q_des);
       if (!current_state_.armed && (ros::Time::now() - last_request_ > ros::Duration(5.0))) {
         if (arming_client_.call(arm_cmd_) && arm_cmd_.response.success) {
           ROS_INFO("Vehicle armed");
@@ -343,7 +361,7 @@ void geometricCtrl::pubSystemStatus() {
   mavros_msgs::CompanionProcessStatus msg;
 
   msg.header.stamp = ros::Time::now();
-  msg.component = 196;  // MAV_COMPONENT_ID_AVOIDANCE
+  msg.component = 197;  // (was MAV_COMPONENT_ID_AVOIDANCE) changed to VISUAL_INERTIAL_ODOMETRY
   msg.state = (int)companion_state_;
 
   systemstatusPub_.publish(msg);

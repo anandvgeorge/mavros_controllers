@@ -12,6 +12,7 @@ find_package(catkin REQUIRED COMPONENTS
   mavros_extras
   mavros_msgs
   mavlink
+  controller_msgs
 )
 
 generate_dynamic_reconfigure_options(
@@ -56,6 +57,20 @@ target_link_libraries(geometric_controller_node ${PROJECT_NAME} ${catkin_LIBRARI
 ##########
 # cs_install()
 # cs_export()
+
+install(TARGETS ${PROJECT_NAME}
+  ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
+  LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
+  RUNTIME DESTINATION ${CATKIN_GLOBAL_BIN_DESTINATION}
+)
+
+## Mark cpp header files for installation
+install(DIRECTORY include/${PROJECT_NAME}/
+  DESTINATION ${CATKIN_PACKAGE_INCLUDE_DESTINATION}
+  # FILES_MATCHING PATTERN "*.h"
+  # PATTERN ".svn" EXCLUDE
+)
+
 #############
 ## Testing ##
 #############
